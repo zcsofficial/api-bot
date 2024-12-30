@@ -24,11 +24,13 @@ def get_activity_details(employee_transaction_id: int):
         "employeeTransactionId": employee_transaction_id
     }
 
-    # Make the API request
-    response = requests.post(API_URL, json=body, headers=HEADERS, verify=False)
-    if response.status_code == 200:
+    try:
+        # Make the API request with SSL verification enabled
+        response = requests.post(API_URL, json=body, headers=HEADERS)
+        response.raise_for_status()  # Raise an exception for HTTP errors
         return response.json()  # Return the API response as a dictionary
-    else:
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching activity details: {e}")
         return None
 
 def start(update: Update, context: CallbackContext):
