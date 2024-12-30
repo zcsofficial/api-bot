@@ -1,27 +1,33 @@
 import logging
+import os
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-import requests
-from datetime import datetime
-from flask import Flask, request
+import asyncio
+
+# Flask app setup
+app = Flask(__name__)
 
 # Replace this with your Bot's API Token
 TOKEN = '7772489059:AAFOWyMsWPVy78lwLd7mOxoiCA-CXtJNX7M'
 
-# API Endpoint and Headers
+# API Endpoint and Headers for activity details
 API_URL = 'https://ebantisaiapi.ebantis.com/aiapi/v1.0/activitydetails'
 HEADERS = {'Content-Type': 'application/json'}
 
-# Initialize Flask app
-app = Flask(__name__)
+# This will handle the webhooks
+async def set_webhook(application):
+    webhook_url = 'https://eba-bot-v1.onrender.com/webhook'
+    await application.bot.set_webhook(url=webhook_url)
 
+# Define the activity details API call
 def get_activity_details(employee_transaction_id: int):
+    from datetime import datetime
     # Get the current date and time
     current_time = datetime.now()
     from_date = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
     to_date = current_time.replace(hour=23, minute=59, second=59, microsecond=0)
 
-    # Prepare the API body
     body = {
         "fromDate": from_date.isoformat(),
         "toDate": to_date.isoformat(),
@@ -35,9 +41,11 @@ def get_activity_details(employee_transaction_id: int):
     else:
         return None
 
+# Start command handler
 def start(update: Update, context: CallbackContext):
     update.message.reply_text('Hello! Please provide your employee transaction ID.')
 
+# Handle transaction ID and fetch data
 def handle_transaction_id(update: Update, context: CallbackContext):
     try:
         employee_transaction_id = int(update.message.text)  # Get employeeTransactionId from user input
@@ -64,32 +72,36 @@ def handle_transaction_id(update: Update, context: CallbackContext):
     except ValueError:
         update.message.reply_text('Please send a valid employee transaction ID (number).')
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    # Handle incoming updates from Telegram
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    application.process_update(update)
-    return 'OK', 200
-
-def main():
+# Main function to run the bot
+async def main():
     # Set up logging
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    # Create an Application instance and pass it your bot's token
-    global application
+    # Create the application instance and pass it the bot's token
     application = Application.builder().token(TOKEN).build()
+
+    # Set webhook asynchronously
+    await set_webhook(application)
 
     # Register command and message handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_transaction_id))
 
-    # Set webhook for the bot
-    application.bot.set_webhook(url='https://eba-bot-v1.onrender.com/webhook')
+    # Start the bot with polling
+    await application.run_polling()
 
-    # Start Flask server to listen for updates
-    app.run(host='0.0.0.0', port=8000)
+# Flask route to handle the webhook
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = Update.de_json(json_str, application.bot)
+    application.process_update(update)
+    return 'OK', 200
 
+# Running the app with Flask and asyncio
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+    app.run(host='0.0.0.0', port=os.getenv('PORT', 5000))
