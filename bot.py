@@ -3,6 +3,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 import requests
 from datetime import datetime
+from flask import Flask, request
 
 # Replace this with your Bot's API Token
 TOKEN = '7772489059:AAFOWyMsWPVy78lwLd7mOxoiCA-CXtJNX7M'
@@ -10,6 +11,9 @@ TOKEN = '7772489059:AAFOWyMsWPVy78lwLd7mOxoiCA-CXtJNX7M'
 # API Endpoint and Headers
 API_URL = 'https://ebantisaiapi.ebantis.com/aiapi/v1.0/activitydetails'
 HEADERS = {'Content-Type': 'application/json'}
+
+# Initialize Flask app
+app = Flask(__name__)
 
 def get_activity_details(employee_transaction_id: int):
     # Get the current date and time
@@ -24,13 +28,11 @@ def get_activity_details(employee_transaction_id: int):
         "employeeTransactionId": employee_transaction_id
     }
 
-    try:
-        # Make the API request with SSL verification enabled
-        response = requests.post(API_URL, json=body, headers=HEADERS)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+    # Make the API request
+    response = requests.post(API_URL, json=body, headers=HEADERS, verify=False)
+    if response.status_code == 200:
         return response.json()  # Return the API response as a dictionary
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching activity details: {e}")
+    else:
         return None
 
 def start(update: Update, context: CallbackContext):
@@ -62,6 +64,13 @@ def handle_transaction_id(update: Update, context: CallbackContext):
     except ValueError:
         update.message.reply_text('Please send a valid employee transaction ID (number).')
 
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # Handle incoming updates from Telegram
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.process_update(update)
+    return 'OK', 200
+
 def main():
     # Set up logging
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -69,14 +78,18 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create an Application instance and pass it your bot's token
+    global application
     application = Application.builder().token(TOKEN).build()
 
     # Register command and message handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_transaction_id))
 
-    # Start the Bot
-    application.run_polling()
+    # Set webhook for the bot
+    application.bot.set_webhook(url='https://eba-bot-v1.onrender.com/webhook')
+
+    # Start Flask server to listen for updates
+    app.run(host='0.0.0.0', port=8000)
 
 if __name__ == '__main__':
     main()
