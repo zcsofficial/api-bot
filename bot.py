@@ -2,36 +2,37 @@ import logging
 import os
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import asyncio
+import requests
+from datetime import datetime
 
-# Flask app setup
+# Flask setup
 app = Flask(__name__)
 
-# Replace this with your Bot's API Token
+# Telegram Bot Token
 TOKEN = '7772489059:AAFOWyMsWPVy78lwLd7mOxoiCA-CXtJNX7M'
 
-# API Endpoint and Headers for activity details
+# API Endpoint and Headers
 API_URL = 'https://ebantisaiapi.ebantis.com/aiapi/v1.0/activitydetails'
 HEADERS = {'Content-Type': 'application/json'}
 
-# This will handle the webhooks
-async def set_webhook(application):
-    webhook_url = 'https://eba-bot-v1.onrender.com/webhook'
-    await application.bot.set_webhook(url=webhook_url)
+# Logging configuration
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Define the activity details API call
+# Async function to fetch activity details
 def get_activity_details(employee_transaction_id: int):
-    from datetime import datetime
     # Get the current date and time
     current_time = datetime.now()
     from_date = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
     to_date = current_time.replace(hour=23, minute=59, second=59, microsecond=0)
 
+    # Prepare the API body
     body = {
         "fromDate": from_date.isoformat(),
         "toDate": to_date.isoformat(),
-        "employeeTransactionId": employee_transaction_id
+        "employeeTransactionId": employee_transaction_id,
     }
 
     # Make the API request
@@ -41,12 +42,12 @@ def get_activity_details(employee_transaction_id: int):
     else:
         return None
 
-# Start command handler
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text('Hello! Please provide your employee transaction ID.')
+# Command handler for /start
+async def start(update: Update, context):
+    await update.message.reply_text('Hello! Please provide your employee transaction ID.')
 
-# Handle transaction ID and fetch data
-def handle_transaction_id(update: Update, context: CallbackContext):
+# Handle transaction ID input
+async def handle_transaction_id(update: Update, context):
     try:
         employee_transaction_id = int(update.message.text)  # Get employeeTransactionId from user input
         data = get_activity_details(employee_transaction_id)
@@ -65,43 +66,40 @@ def handle_transaction_id(update: Update, context: CallbackContext):
                 response_message += f"Date: {entry.get('productivityDate', 'N/A')}\n"
                 for data in entry.get('collectedData', []):
                     response_message += f"Start Time: {data.get('StartTime', 'N/A')} | Duration: {data.get('Duration', 'N/A')}s\n"
-            
-            update.message.reply_text(response_message)
+
+            await update.message.reply_text(response_message)
         else:
-            update.message.reply_text('No data found for the provided employee transaction ID.')
+            await update.message.reply_text('No data found for the provided employee transaction ID.')
     except ValueError:
-        update.message.reply_text('Please send a valid employee transaction ID (number).')
+        await update.message.reply_text('Please send a valid employee transaction ID (number).')
 
-# Main function to run the bot
+# Telegram webhook handler
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    # Get incoming Telegram updates and process them
+    json_str = request.get_data().decode('UTF-8')
+    update = Update.de_json(json_str, bot=application.bot)
+    await application.process_update(update)
+    return 'OK', 200
+
+# Setup the bot and webhook
 async def main():
-    # Set up logging
-    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    # Create the application instance and pass it the bot's token
+    global application
     application = Application.builder().token(TOKEN).build()
-
-    # Set webhook asynchronously
-    await set_webhook(application)
 
     # Register command and message handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_transaction_id))
 
-    # Start the bot with polling
-    await application.run_polling()
+    # Set the webhook
+    webhook_url = 'https://eba-bot-v1.onrender.com/webhook'
+    await application.bot.set_webhook(url=webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
 
-# Flask route to handle the webhook
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = Update.de_json(json_str, application.bot)
-    application.process_update(update)
-    return 'OK', 200
-
-# Running the app with Flask and asyncio
+# Start Flask and bot together
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
+
+    # Run the Flask app
     app.run(host='0.0.0.0', port=os.getenv('PORT', 5000))
